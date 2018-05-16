@@ -26,7 +26,34 @@ struct win32_window_dimension {
 global_var bool RUNNING;
 global_var win32_offscreen_buffer GlobalBackbuffer;
 
-win32_window_dimension Win32GetWindowDimension(HWND Window) {
+// NOTE: Support for XInputGetState 
+#define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
+typedef X_INPUT_GET_STATE(x_input_get_state);
+X_INPUT_GET_STATE(XInputGetStateStub) {
+  return(0);
+}
+global_var x_input_get_state *XInputGetState_ = XInputGetStateStub;
+#define XInputGetState XInputGetState_
+
+// NOTE: Support for XInputGetState 
+#define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION *pVibration)
+typedef X_INPUT_SET_STATE(x_input_set_state);
+X_INPUT_SET_STATE(XInputSetStateStub) {
+  return(0);
+}
+global_var x_input_set_state *XInputSetState_ = XInputSetStateStub;
+#define XInputSetState XInputSetState_
+
+internal void
+Win32LoadXInput(void) {
+  HMODULE XInputLibrary = LoadLibrary("xinput1_3.dll");
+  if(XInputLibrary) {
+    XInputGetState = (x_input_get_state *)GetProcAddress(XInputLibrary, "XInputGetState");
+    XInputSetState = (x_input_set_state *)GetProcAddress(XInputLibrary, "XInputSetState");
+  }
+}
+
+internal win32_window_dimension Win32GetWindowDimension(HWND Window) {
   win32_window_dimension Result;
 
   RECT ClientRect;
@@ -38,11 +65,11 @@ win32_window_dimension Win32GetWindowDimension(HWND Window) {
 }
 
 internal void
-RenderWeirdGradient(win32_offscreen_buffer Buffer, int XOffset, int YOffset) {
-  uint8_t *Row = (uint8_t *)Buffer.Memory;
-  for(int Y = 0; Y < Buffer.Height; ++Y) {
+RenderWeirdGradient(win32_offscreen_buffer *Buffer, int XOffset, int YOffset) {
+  uint8_t *Row = (uint8_t *)Buffer->Memory;
+  for(int Y = 0; Y < Buffer->Height; ++Y) {
     uint32_t *Pixel = (uint32_t *)Row;
-    for(int X = 0; X < Buffer.Width; ++X) {
+    for(int X = 0; X < Buffer->Width; ++X) {
 
       /*
         Memory:  BB GG RR xx
@@ -61,7 +88,7 @@ RenderWeirdGradient(win32_offscreen_buffer Buffer, int XOffset, int YOffset) {
 
       *Pixel++ = ((Green << 8) | Blue); // fancy register bit maths
     }
-    Row += Buffer.Pitch;
+    Row += Buffer->Pitch;
   }
 }
 
@@ -94,15 +121,14 @@ Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, int Height) {
 }
 
 internal void
-Win32DisplayBufferInWindow(HDC DeviceContext, int WindowWidth, int WindowHeight, 
-                           win32_offscreen_buffer Buffer,
-                           int X, int Y, int Width, int Height) {
+Win32DisplayBufferInWindow(win32_offscreen_buffer *Buffer, HDC DeviceContext, 
+                           int WindowWidth, int WindowHeight) {
     // TODO: Aspect Ratio Correction
     StretchDIBits(DeviceContext, 
                   0, 0, WindowWidth, WindowHeight,
-                  0, 0, Buffer.Width, Buffer.Height,
-                  Buffer.Memory,
-                  &Buffer.Info,
+                  0, 0, Buffer->Width, Buffer->Height,
+                  Buffer->Memory,
+                  &Buffer->Info,
                   DIB_RGB_COLORS, SRCCOPY);
 }
 
@@ -114,18 +140,6 @@ Win32MainWindowCallback(HWND Window,
 {
   LRESULT Result = 0;
   switch(Message) {
-    case WM_SIZE:
-    {
-      // win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-      // Win32ResizeDIBSection(&GlobalBackbuffer, Dimension.Width, Dimension.Height);
-      break;
-    }
-    case WM_DESTROY:
-    {
-      // TODO: handle this as an error - create window?
-      RUNNING = false;
-      break;
-    }
     case WM_CLOSE:
     {
       // TODO: handle this with a message to the user?
@@ -135,6 +149,60 @@ Win32MainWindowCallback(HWND Window,
     case WM_ACTIVATEAPP:
     {
       OutputDebugStringA("WM_ACTIVATEAPP\n");
+      break;
+    }
+    case WM_DESTROY:
+    {
+      // TODO: handle this as an error - create window?
+      RUNNING = false;
+      break;
+    }
+    case WM_SYSKEYDOWN:
+    case WM_SYSKEYUP:
+    case WM_KEYDOWN:
+    case WM_KEYUP:
+    {
+      // wParam is the virtual keykode
+      uint32_t VKCode = WParam;
+      bool WasDown = ((LParam & (1 << 30)) != 0);
+      bool IsDown = ((LParam & (1 << 31)) == 0);
+
+      if(WasDown != IsDown) {
+        if(VKCode == 'W') {
+          OutputDebugStringA("W\n");
+        }
+        else if(VKCode == 'A') {
+        }
+        else if(VKCode == 'S') {
+        }
+        else if(VKCode == 'D') {
+        }
+        else if(VKCode == 'Q') {
+        }
+        else if(VKCode == 'E') {
+        }
+        else if(VKCode == VK_UP) {
+        }
+        else if(VKCode == VK_LEFT) {
+        }
+        else if(VKCode == VK_DOWN) {
+        }
+        else if(VKCode == VK_RIGHT) {
+        }
+        else if(VKCode == VK_ESCAPE) {
+          OutputDebugString("Esacpe: ");
+          if(IsDown) {
+            OutputDebugString("IsDown ");
+          }
+          if(WasDown) {
+            OutputDebugString("WasDown");
+          }
+          OutputDebugString("\n");
+
+        }
+        else if(VKCode == VK_SPACE) {
+        }
+      }
       break;
     }
     case WM_PAINT:
@@ -148,8 +216,8 @@ Win32MainWindowCallback(HWND Window,
 
       win32_window_dimension Dimension = Win32GetWindowDimension(Window);
 
-      Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height, 
-                                 GlobalBackbuffer, X, Y, Width, Height);
+      Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, 
+                                 Dimension.Width, Dimension.Height);
 
       EndPaint(Window, &Paint);
       break;
@@ -168,6 +236,9 @@ int CALLBACK WinMain(
   LPSTR     lpCmdLine,
   int       nCmdShow
 ){
+
+  // Initialization
+  Win32LoadXInput();
 
   // make sure to 0 values
   WNDCLASS WindowClass = {};
@@ -215,23 +286,48 @@ int CALLBACK WinMain(
           XINPUT_STATE ControllerState;
           // ZeroMemory( &state, sizeof(XINPUT_STATE) );
           if( XInputGetState( ControllerIndex, &ControllerState ) == ERROR_SUCCESS ) { // Controller is connected 
-            XINPUT_GAMEPAD = *Pad = &ControllerState.Gamepad;
+            XINPUT_GAMEPAD *Pad = &ControllerState.Gamepad;
+
+            bool Up = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
+            bool Down = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
+            bool Left = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
+            bool Right = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
+            bool Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
+            bool Back = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
+            bool LeftShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
+            bool RightShoulder = (Pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
+            bool AButton = (Pad->wButtons & XINPUT_GAMEPAD_A);
+            bool BButton = (Pad->wButtons & XINPUT_GAMEPAD_B);
+            bool XButton = (Pad->wButtons & XINPUT_GAMEPAD_X);
+            bool YButton = (Pad->wButtons & XINPUT_GAMEPAD_Y);
+
+            int16_t StickX = Pad->sThumbLX;
+            int16_t StickY = Pad->sThumbLY;
+            if (AButton) {
+              yOffset += 2;
+            }
+
           } else {  // Controller is not connected 
 
           }
         }
 
-        RenderWeirdGradient(GlobalBackbuffer, xOffset, yOffset);
+        // Gamepad Vibration
+        // XINPUT_VIBRATION Vibration;
+        // Vibration.wLeftMotorSpeed = 60000;
+        // Vibration.wRightMotorSpeed = 60000;
+        // XInputSetState(0, &Vibration);
+
+        RenderWeirdGradient(&GlobalBackbuffer, xOffset, yOffset);
 
         HDC DeviceContext = GetDC(Window);
 
         win32_window_dimension Dimension = Win32GetWindowDimension(Window); 
-        Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height, GlobalBackbuffer, 
-                                   0, 0, Dimension.Width, Dimension.Height);
+        Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext, 
+                                   Dimension.Width, Dimension.Height);
         ReleaseDC(Window, DeviceContext);
 
         ++xOffset;
-        yOffset += 2;
       }
       
     } else {
@@ -240,7 +336,6 @@ int CALLBACK WinMain(
   } else {
     // TODO: Logging
   }
-  
 
   return(0);
 }
