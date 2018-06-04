@@ -467,6 +467,10 @@ WinMain(HINSTANCE Instance,
         LPSTR CommandLine,
         int ShowCode)
 {    
+    LARGE_INTEGER PerfCounterFrequencyResult;
+    QueryPerformanceFrequency(&PerfCounterFrequencyResult);
+    int64 PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+
     Win32LoadXInput();
     
     WNDCLASSA WindowClass = {};
@@ -478,6 +482,8 @@ WinMain(HINSTANCE Instance,
     WindowClass.hInstance = Instance;
 //    WindowClass.hIcon;
     WindowClass.lpszClassName = "HandmadeHeroWindowClass";
+
+
 
     if(RegisterClassA(&WindowClass))
     {
@@ -519,8 +525,11 @@ WinMain(HINSTANCE Instance,
             Win32InitDSound(Window, SoundOutput.SamplesPerSecond, SoundOutput.SecondaryBufferSize);
             Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.LatencySampleCount*SoundOutput.BytesPerSample);
             GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
-                            
+
             GlobalRunning = true;
+            LARGE_INTEGER LastCounter;
+            QueryPerformanceCounter(&LastCounter);
+            int64 LastCycleCount = __rdtsc();
             while(GlobalRunning)
             {
                 MSG Message;
@@ -613,6 +622,23 @@ WinMain(HINSTANCE Instance,
                 win32_window_dimension Dimension = Win32GetWindowDimension(Window);
                 Win32DisplayBufferInWindow(&GlobalBackbuffer, DeviceContext,
                                            Dimension.Width, Dimension.Height);
+
+                int64 EndCycleCount = __rdtsc();
+                LARGE_INTEGER EndCounter;
+                QueryPerformanceCounter(&EndCounter);
+
+                // TODO: display value here
+                int64 CyclesElapsed = EndCycleCount - LastCycleCount;
+                int64 CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
+                // int32 MSPerFrame = (int32)((1000 * CounterElapsed) / PerfCounterFrequency);
+                int32 FPS =  (int32)(PerfCounterFrequency / CounterElapsed);
+
+                char Buffer[256];
+                wsprintf(Buffer, "FPS: %d | MillionCyclesPerFrame: %d\n", FPS, (CyclesElapsed / 1000000));
+                OutputDebugStringA(Buffer);
+
+                LastCounter = EndCounter;
+                LastCycleCount = EndCycleCount;
             }
         }
         else
